@@ -6,7 +6,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # Определяем базовую директорию проекта
 BASE_DIR = Path(__file__).parent
@@ -33,7 +34,7 @@ SECRETS_FILE = DATA_DIR / 'allowed_users.json'
 # Для тестирования можно использовать тестовые значения
 if not BOT_TOKEN:
     print("⚠️  BOT_TOKEN не найден, используем тестовый режим")
-    BOT_TOKEN = "TEST_MODE"  # Замените на реальный токен для работы
+    BOT_TOKEN = "TEST_MODE"
 
 print(f"📁 Директория данных: {DATA_DIR}")
 print(f"🔑 Файл с ключами: {SECRETS_FILE}")
@@ -66,6 +67,35 @@ def save_allowed_secrets(secrets_dict):
         json.dump(secrets_dict, f, indent=4)
     print(f"💾 Сохранено {len(secrets_dict)} ключей в {SECRETS_FILE}")
 
+def get_proxy_links(secret):
+    """Генерирует ссылки для прокси"""
+    tg_link = f"tg://proxy?server={PROXY_SERVER}&port={PROXY_PORT}&secret={secret}"
+    web_link = f"https://t.me/proxy?server={PROXY_SERVER}&port={PROXY_PORT}&secret={secret}"
+    return tg_link, web_link
+
+def get_proxy_keyboard(tg_link, web_link):
+    """Создает клавиатуру с кнопками для подключения"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.row(InlineKeyboardButton(
+        text="🚀 ПОДКЛЮЧИТЬСЯ К ПРОКСИ",
+        url=tg_link
+    ))
+    
+    builder.row(
+        InlineKeyboardButton(
+            text="🌐 Web-ссылка",
+            url=web_link
+        )
+        # Убрали кнопку "Скопировать ключ", так как ключ уже есть в тексте
+    )
+    
+    builder.row(InlineKeyboardButton(
+        text="❓ Как это работает",
+        callback_data="help"
+    ))
+    
+    return builder.as_markup()
 # Тестовые функции для проверки без бота
 def test_generate_key():
     """Тестовая генерация ключа"""
@@ -88,11 +118,10 @@ def test_generate_key():
 def test_proxy_link():
     """Тестовая генерация ссылки прокси"""
     secret = secrets.token_hex(16)
-    link = f"tg://proxy?server={PROXY_SERVER}&port={PROXY_PORT}&secret={secret}"
-    web_link = f"https://t.me/proxy?server={PROXY_SERVER}&port={PROXY_PORT}&secret={secret}"
+    tg_link, web_link = get_proxy_links(secret)
     
     print(f"\n🔗 Тестовая ссылка прокси:")
-    print(f"  TG: {link}")
+    print(f"  TG: {tg_link}")
     print(f"  Web: {web_link}")
     print(f"  Secret: {secret}")
 
@@ -106,10 +135,14 @@ if dp:
         
         if user_id in allowed_users:
             existing_secret = allowed_users[user_id]
+            tg_link, web_link = get_proxy_links(existing_secret)
+            
             await message.answer(
-                f"🔑 Ваш действующий ключ: `{existing_secret}`\n"
-                f"🔗 Ссылка: `tg://proxy?server={PROXY_SERVER}&port={PROXY_PORT}&secret={existing_secret}`",
-                parse_mode="Markdown"
+                f"🔑 <b>Ваш ключ для подключения готов!</b>\n\n"
+                f"<code>{existing_secret}</code>\n\n"
+                f"👇 Нажмите кнопку ниже для автоматической настройки прокси:",
+                parse_mode="HTML",
+                reply_markup=get_proxy_keyboard(tg_link, web_link)
             )
             return
         
@@ -120,22 +153,89 @@ if dp:
                 allowed_users[user_id] = new_secret
                 save_allowed_secrets(allowed_users)
                 
+                tg_link, web_link = get_proxy_links(new_secret)
+                
+                # Отправляем приветственное сообщение с кнопками
                 await message.answer(
-                    f"✅ Подписка подтверждена!\n"
-                    f"🔑 Ключ: `{new_secret}`\n"
-                    f"🔗 Ссылка: `tg://proxy?server={PROXY_SERVER}&port={PROXY_PORT}&secret={new_secret}`",
-                    parse_mode="Markdown"
+                    f"✅ <b>Подписка подтверждена!</b>\n\n"
+                    f"🔑 <b>Ваш личный ключ:</b>\n"
+                    f"<code>{new_secret}</code>\n\n"
+                    f"👇 <b>Нажмите кнопку для подключения:</b>",
+                    parse_mode="HTML",
+                    reply_markup=get_proxy_keyboard(tg_link, web_link)
+                )
+                
+                # Отправляем дополнительное сообщение с инструкцией (опционально)
+                await message.answer(
+                    f"📱 <b>Как это работает:</b>\n"
+                    f"1️⃣ Нажмите кнопку <b>«ПОДКЛЮЧИТЬСЯ»</b>\n"
+                    f"2️⃣ Telegram спросит подтверждение\n"
+                    f"3️⃣ Готово! Прокси настроен автоматически\n\n"
+                    f"🌐 Если кнопка не работает, используйте Web-ссылку или скопируйте ключ вручную.",
+                    parse_mode="HTML"
                 )
             else:
-                await message.answer(f"❌ Подпишитесь на {CHANNEL_ID}")
+                await message.answer(
+                    f"❌ <b>Подписка не найдена</b>\n\n"
+                    f"Чтобы получить доступ к прокси, подпишитесь на канал:\n"
+                    f"{CHANNEL_ID}\n\n"
+                    f"После подписки нажмите /start снова.",
+                    parse_mode="HTML"
+                )
         except Exception as e:
-            await message.answer("Ошибка проверки подписки")
-            print(f"Error: {e}")
+            await message.answer(
+                "❌ Ошибка проверки подписки\n\n"
+                "Пожалуйста, попробуйте позже или обратитесь к администратору."
+            )
+            print(f"Error checking subscription for user {user_id}: {e}")
 
     @dp.message(Command("stats"))
     async def cmd_stats(message: Message):
-        allowed_users = load_allowed_secrets()
-        await message.answer(f"📊 Всего пользователей: {len(allowed_users)}")
+        """Статистика для администратора"""
+        # Простая проверка на админа (можно добавить список админов)
+        if message.from_user.id == 123456789:  # Замените на свой ID
+            allowed_users = load_allowed_secrets()
+            active_count = len(allowed_users)
+            
+            stats_text = (
+                f"📊 <b>Статистика прокси</b>\n\n"
+                f"👥 Всего пользователей: <b>{active_count}</b>\n"
+                f"🆔 Последние 5:\n"
+            )
+            
+            # Добавляем последних 5 пользователей
+            for uid, secret in list(allowed_users.items())[-5:]:
+                stats_text += f"  • <code>{uid}</code>: {secret[:8]}...\n"
+            
+            await message.answer(stats_text, parse_mode="HTML")
+        else:
+            await message.answer("⛔ Эта команда только для администраторов")
+
+    @dp.callback_query()
+    async def handle_callback(callback: types.CallbackQuery):
+        """Обработка нажатий на кнопки"""
+        if callback.data.startswith("copy_"):
+            # Показываем ключ в уведомлении
+            await callback.answer(
+                "Ключ скопирован! Вставьте его в настройках Telegram",
+                show_alert=False
+            )
+        elif callback.data == "help":
+            await callback.message.answer(
+                "❓ <b>Как пользоваться прокси:</b>\n\n"
+                "1️⃣ Нажмите кнопку «ПОДКЛЮЧИТЬСЯ»\n"
+                "2️⃣ Telegram автоматически откроет настройки\n"
+                "3️⃣ Нажмите «Добавить прокси»\n"
+                "4️⃣ Готово! Telegram будет работать через прокси\n\n"
+                "🌐 <b>Ручная настройка:</b>\n"
+                "Сервер: {PROXY_SERVER}\n"
+                "Порт: {PROXY_PORT}\n"
+                "Секретный ключ: скопируйте из сообщения",
+                parse_mode="HTML"
+            )
+            await callback.answer()
+
+# ... (остальные функции остаются без изменений)
 
 async def main():
     if bot and dp:
